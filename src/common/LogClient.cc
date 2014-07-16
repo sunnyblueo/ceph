@@ -15,6 +15,7 @@
 
 
 #include "include/types.h"
+#include "include/str_map.h"
 
 #include "msg/Messenger.h"
 #include "msg/Message.h"
@@ -42,9 +43,23 @@
 LogClient::LogClient(CephContext *cct, Messenger *m, MonMap *mm,
 		     enum logclient_flag_t flags)
   : cct(cct), messenger(m), monmap(mm), is_mon(flags & FLAG_MON),
-    log_lock("LogClient::log_lock"), last_log_sent(0), last_log(0)
+    log_lock("LogClient::log_lock"), last_log_sent(0), last_log(0),
+    log_to_syslog(false), log_to_monitors(false)
 {
 }
+
+LogClient::LogClient(CephContext *cct, Messenger *m, MonMap *mm,
+		     enum logclient_flag_t flags,
+                     const string& channel,
+                     const string& facility,
+                     const string& prio)
+  : cct(cct), messenger(m), monmap(mm), is_mon(flags & FLAG_MON),
+    log_lock("LogClient::log_lock"), last_log_sent(0), last_log(0),
+    log_channel(channel), log_prio(prio), syslog_facility(facility),
+    log_to_syslog(false), log_to_monitors(false)
+{
+}
+
 
 LogClientTemp::LogClientTemp(clog_type type_, LogClient &parent_)
   : type(type_), parent(parent_)
@@ -84,15 +99,16 @@ void LogClient::do_log(clog_type prio, const std::string& s)
   e.seq = ++last_log;
   e.prio = prio;
   e.msg = s;
+  e.channel = get_log_channel();
 
   // log to syslog?
-  if (cct->_conf->clog_to_syslog) {
-    e.log_to_syslog(cct->_conf->clog_to_syslog_level,
-		    cct->_conf->clog_to_syslog_facility);
+  if (do_log_to_syslog()) {
+    ldout(cct,0) << __func__ << " log to syslog"  << dendl;
+    e.log_to_syslog(get_log_prio(), get_syslog_facility());
   }
 
   // log to monitor?
-  if (cct->_conf->clog_to_monitors) {
+  if (log_to_monitors) {
     log_queue.push_back(e);
 
     // if we are a monitor, queue for ourselves, synchronously
@@ -172,6 +188,17 @@ bool LogClient::handle_log_ack(MLogAck *m)
 {
   Mutex::Locker l(log_lock);
   ldout(cct,10) << "handle_log_ack " << *m << dendl;
+
+  string channel = m->channel;
+  if (channel.empty())
+    channel = get_log_channel();
+
+  if (log_channel != channel) {
+    ldout(cct,15) << __func__ << " msg channel '" << m->channel
+      << "' != my channel '" << log_channel
+      << "'-- ignore" << dendl;
+    return false;
+  }
 
   version_t last = m->last;
 

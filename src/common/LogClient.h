@@ -58,6 +58,11 @@ public:
 
   LogClient(CephContext *cct, Messenger *m, MonMap *mm,
 	    enum logclient_flag_t flags);
+  LogClient(CephContext *cct, Messenger *m, MonMap *mm,
+            enum logclient_flag_t flags,
+            const std::string &channel,
+            const std::string &facility,
+            const std::string &prio);
 
   bool handle_log_ack(MLogAck *m);
 
@@ -96,6 +101,47 @@ public:
   Message *get_mon_log_message();
   bool are_pending();
 
+  void set_log_to_monitors(bool v) {
+    log_to_monitors = v;
+  }
+  void set_log_to_syslog(bool v) {
+    log_to_syslog = v;
+  }
+  void set_log_channel(const std::string& v) {
+    log_channel = v;
+  }
+  void set_log_prio(const std::string& v) {
+    log_prio = v;
+  }
+  void set_syslog_facility(const std::string& v) {
+    syslog_facility = v;
+  }
+  std::string get_log_prio() { return log_prio; }
+  std::string get_log_channel() { return log_channel; }
+  std::string get_syslog_facility() { return syslog_facility; }
+  bool must_log_to_syslog() { return log_to_syslog; }
+  /**
+   * Do we want to log to syslog?
+   *
+   * @return true if log_to_syslog is true and both channel and prio
+   *         are not empty; false otherwise.
+   */
+  bool do_log_to_syslog() {
+    return must_log_to_syslog() &&
+          !log_prio.empty() && !log_channel.empty();
+  }
+  bool must_log_to_monitors() { return log_to_monitors; }
+/*
+  void add_watched_channel(const std::string& c) {
+    watched_channels.insert(c);
+  }
+  void remove_watched_channel(const std::string& c) {
+    watched_channels.erase(c);
+  }
+  bool is_watched_channel(const std::string &c) {
+    return (watched_channels.count(c) > 0);
+  }
+*/
 private:
   void do_log(clog_type prio, std::stringstream& ss);
   void do_log(clog_type prio, const std::string& s);
@@ -109,6 +155,13 @@ private:
   version_t last_log_sent;
   version_t last_log;
   std::deque<LogEntry> log_queue;
+
+  std::string log_channel;
+  std::string log_prio;
+  std::string syslog_facility;
+  bool log_to_syslog;
+  bool log_to_monitors;
+// std::set<const std::string> watched_channels;
 
   friend class LogClientTemp;
 };
