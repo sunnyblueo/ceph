@@ -65,6 +65,7 @@
 #include "include/color.h"
 #include "include/ceph_fs.h"
 #include "include/str_list.h"
+#include "include/str_map.h"
 
 #include "OSDMonitor.h"
 #include "MDSMonitor.h"
@@ -142,6 +143,7 @@ Monitor::Monitor(CephContext* cct_, string nm, MonitorDBStore *s,
   logger(NULL), cluster_logger(NULL), cluster_logger_registered(false),
   monmap(map),
   clog(cct_, messenger, monmap, LogClient::FLAG_MON),
+  audit_clog(cct_, messenger, monmap, LogClient::FLAG_MON),
   key_server(cct, &keyring),
   auth_cluster_required(cct,
 			cct->_conf->auth_supported.length() ?
@@ -181,7 +183,9 @@ Monitor::Monitor(CephContext* cct_, string nm, MonitorDBStore *s,
 {
   rank = -1;
 
-  clog.set_log_to_syslog(cct->_conf->clog_to_syslog);
+
+  update_log_clients();
+
   paxos = new Paxos(this, "paxos");
 
   paxos_service[PAXOS_MDSMAP] = new MDSMonitor(this, paxos, "mdsmap");
@@ -396,6 +400,78 @@ void Monitor::handle_conf_change(const struct md_config_t *conf,
                                  const std::set<std::string> &changed)
 {
   sanitize_options();
+}
+
+void Monitor::update_log_client(
+    LogClient &lc, const string &name,
+    map<string,string> &log_to_monitors,
+    map<string,string> &log_to_syslog,
+    map<string,string> &log_channels,
+    map<string,string> &log_prios)
+{
+  bool to_monitors = (get_str_map_key(log_to_monitors, name,
+                                      &CLOG_CHANNEL_DEFAULT) == "true");
+  bool to_syslog = (get_str_map_key(log_to_syslog, name,
+                                    &CLOG_CHANNEL_DEFAULT) == "true");
+  string syslog_facility = get_str_map_key(log_channels, name,
+                                           &CLOG_CHANNEL_DEFAULT);
+  string prio = get_str_map_key(log_prios, name, &CLOG_CHANNEL_DEFAULT);
+
+  lc.set_log_to_monitors(to_monitors);
+  lc.set_log_to_syslog(to_syslog);
+  lc.set_syslog_facility(syslog_facility);
+  lc.set_log_channel(name);
+  lc.set_log_prio(prio);
+
+  dout(15) << __func__ << " " << name << "("
+           << " to_monitors: " << (to_monitors ? "true" : "false")
+           << " to_syslog: " << (to_syslog ? "true" : "false")
+           << " syslog_facility: " << syslog_facility
+           << " prio: " << prio << ")" << dendl;
+}
+
+void Monitor::update_log_clients()
+{
+  map<string,string> log_to_monitors;
+  map<string,string> log_to_syslog;
+  map<string,string> log_channel;
+  map<string,string> log_prio;
+  ostringstream oss;
+
+  int r = get_conf_str_map_helper(g_conf->clog_to_monitors, oss,
+                                  &log_to_monitors, CLOG_CHANNEL_DEFAULT);
+  if (r < 0) {
+    derr << __func__ << " error parsing 'clog_to_monitors'" << dendl;
+    return;
+  }
+
+  r = get_conf_str_map_helper(g_conf->clog_to_syslog, oss,
+                              &log_to_syslog, CLOG_CHANNEL_DEFAULT);
+  if (r < 0) {
+    derr << __func__ << " error parsing 'clog_to_syslog'" << dendl;
+    return;
+  }
+
+  r = get_conf_str_map_helper(g_conf->clog_to_syslog_facility, oss,
+                              &log_channel, CLOG_CHANNEL_DEFAULT);
+  if (r < 0) {
+    derr << __func__ << " error parsing 'clog_to_syslog_facility'" << dendl;
+    return;
+  }
+
+  r = get_conf_str_map_helper(g_conf->clog_to_syslog_level, oss,
+                              &log_prio, CLOG_CHANNEL_DEFAULT);
+  if (r < 0) {
+    derr << __func__ << " error parsing 'clog_to_syslog_level'" << dendl;
+    return;
+  }
+
+  update_log_client(clog, CLOG_CHANNEL_CLUSTER,
+                    log_to_monitors, log_to_syslog,
+                    log_channel, log_prio);
+  update_log_client(audit_clog, CLOG_CHANNEL_AUDIT,
+                    log_to_monitors, log_to_syslog,
+                    log_channel, log_prio);
 }
 
 int Monitor::sanitize_options()
@@ -2313,9 +2389,16 @@ void Monitor::handle_command(MMonCommand *m)
   if (!_allowed_command(session, module, prefix, cmdmap,
                         param_str_map, mon_cmd)) {
     dout(1) << __func__ << " access denied" << dendl;
+    audit_clog.info() << "from='" << session->inst << "' "
+                      << "entity='" << session->auth_handler->get_entity_name()
+                      << "' cmd=" << m->cmd << ":  access denied";
     reply_command(m, -EACCES, "access denied", 0);
     return;
   }
+
+  audit_clog.info() << "from='" << session->inst << "' "
+    << "entity='" << session->auth_handler->get_entity_name()
+    << "' cmd=" << m->cmd << ": dispatch";
 
   if (module == "mds" || module == "fs") {
     mdsmon()->dispatch(m);
@@ -3078,6 +3161,7 @@ bool Monitor::dispatch(MonSession *s, Message *m, const bool src_is_mon)
 
     case MSG_LOGACK:
       clog.handle_log_ack((MLogAck*)m);
+      audit_clog.handle_log_ack((MLogAck*)m);
       m->put();
       break;
 
