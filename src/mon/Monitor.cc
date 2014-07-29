@@ -181,6 +181,7 @@ Monitor::Monitor(CephContext* cct_, string nm, MonitorDBStore *s,
 {
   rank = -1;
 
+  clog.set_log_to_syslog(cct->_conf->clog_to_syslog);
   paxos = new Paxos(this, "paxos");
 
   paxos_service[PAXOS_MDSMAP] = new MDSMonitor(this, paxos, "mdsmap");
