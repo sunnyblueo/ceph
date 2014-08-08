@@ -2559,9 +2559,9 @@ int OSDMap::build_simple(CephContext *cct, epoch_t e, uuid_d &fsid,
   }
 
   map<string,string> erasure_code_profile_map;
-  r = get_str_map(cct->_conf->osd_pool_default_erasure_code_profile,
-		  ss,
-		  &erasure_code_profile_map);
+  r = get_json_str_map(cct->_conf->osd_pool_default_erasure_code_profile,
+		       ss,
+		       &erasure_code_profile_map);
   erasure_code_profile_map["directory"] =
     cct->_conf->osd_pool_default_erasure_code_directory;
   set_erasure_code_profile("default", erasure_code_profile_map);
