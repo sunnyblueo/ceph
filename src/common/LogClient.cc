@@ -39,6 +39,11 @@
 #include "common/config.h"
 
 #define dout_subsys ceph_subsys_monc
+#undef dout_prefix
+#define dout_prefix _prefix(_dout, this)
+static ostream& _prefix(std::ostream *_dout, LogClient *logc) {
+  return *_dout << "log_client(" << logc->get_log_channel() << ") ";
+}
 
 LogClient::LogClient(CephContext *cct, Messenger *m, MonMap *mm,
 		     enum logclient_flag_t flags)
@@ -189,10 +194,6 @@ bool LogClient::handle_log_ack(MLogAck *m)
   Mutex::Locker l(log_lock);
   ldout(cct,10) << "handle_log_ack " << *m << dendl;
 
-  string channel = m->channel;
-  if (channel.empty())
-    channel = get_log_channel();
-
   if (log_channel != channel) {
     ldout(cct,15) << __func__ << " msg channel '" << m->channel
       << "' != my channel '" << log_channel
@@ -205,6 +206,16 @@ bool LogClient::handle_log_ack(MLogAck *m)
   deque<LogEntry>::iterator q = log_queue.begin();
   while (q != log_queue.end()) {
     const LogEntry &entry(*q);
+
+    string channel = entry.channel;
+    // LogEntry::decode() must set channel to CLOG_CHANNEL_DEFAULT
+    // in case the monitor sending the ack does not support the
+    // 'channel' format.
+    assert(!channel.empty());
+
+    // TODO: we must ensure that we only handle our channels
+    //       or that we handle default without blowing up.
+
     if (entry.seq > last)
       break;
     ldout(cct,10) << " logged " << entry << dendl;
