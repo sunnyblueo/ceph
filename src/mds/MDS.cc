@@ -83,7 +83,7 @@ MDS::MDS(const std::string &n, Messenger *m, MonClient *mc) :
   Dispatcher(m->cct),
   mds_lock("MDS::mds_lock"),
   timer(m->cct, mds_lock),
-  beacon(mc, n),
+  beacon(m->cct, mc, n),
   authorize_handler_cluster_registry(new AuthAuthorizeHandlerRegistry(m->cct,
 								      m->cct->_conf->auth_supported.length() ?
 								      m->cct->_conf->auth_supported :
@@ -587,6 +587,7 @@ int MDS::init(MDSMap::DaemonState wanted_state)
   objecter->init();
 
   messenger->add_dispatcher_tail(objecter);
+  messenger->add_dispatcher_tail(&beacon);
   messenger->add_dispatcher_tail(this);
 
   // get monmap
@@ -1867,11 +1868,7 @@ bool MDS::handle_core_message(Message *m)
     ALLOW_MESSAGES_FROM(CEPH_ENTITY_TYPE_MON | CEPH_ENTITY_TYPE_MDS);
     handle_mds_map(static_cast<MMDSMap*>(m));
     break;
-  case MSG_MDS_BEACON:
-    ALLOW_MESSAGES_FROM(CEPH_ENTITY_TYPE_MON);
-    beacon.handle_mds_beacon(static_cast<MMDSBeacon*>(m));
-    break;
-    
+
     // misc
   case MSG_MON_COMMAND:
     ALLOW_MESSAGES_FROM(CEPH_ENTITY_TYPE_MON);
