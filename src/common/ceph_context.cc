@@ -229,6 +229,23 @@ void CephContext::do_command(std::string command, cmdmap_t& cmdmap,
 	    f->dump_string(var.c_str(), buf);
 	}
       }
+    } else if (command == "config diff") {
+      md_config_t def_conf;
+      map<string,string> diff;
+      set<string> unknown;
+      def_conf.diff(_conf, &diff, &unknown);
+      f->open_object_section("diff");
+      for (map<string,string>::iterator p = diff.begin();
+           p != diff.end(); ++p) {
+        f->dump_string(p->first.c_str(), p->second);
+      }
+      f->close_section();
+      f->open_array_section("unknown");
+      for (set<string>::iterator p = unknown.begin();
+           p != unknown.end(); ++p) {
+        f->dump_string("option", *p);
+      }
+      f->close_section();
     } else if (command == "log flush") {
       _log->flush();
     }
@@ -286,6 +303,9 @@ CephContext::CephContext(uint32_t module_type_)
   _admin_socket->register_command("config show", "config show", _admin_hook, "dump current config settings");
   _admin_socket->register_command("config set", "config set name=var,type=CephString name=val,type=CephString,n=N",  _admin_hook, "config set <field> <val> [<val> ...]: set a config variable");
   _admin_socket->register_command("config get", "config get name=var,type=CephString", _admin_hook, "config get <field>: get the config value");
+  _admin_socket->register_command("config diff",
+      "config diff", _admin_hook,
+      "dump diff of current config and default config");
   _admin_socket->register_command("log flush", "log flush", _admin_hook, "flush log entries to log file");
   _admin_socket->register_command("log dump", "log dump", _admin_hook, "dump recent log entries to log file");
   _admin_socket->register_command("log reopen", "log reopen", _admin_hook, "reopen log file");
@@ -311,6 +331,7 @@ CephContext::~CephContext()
   _admin_socket->unregister_command("config show");
   _admin_socket->unregister_command("config set");
   _admin_socket->unregister_command("config get");
+  _admin_socket->unregister_command("config diff");
   _admin_socket->unregister_command("log flush");
   _admin_socket->unregister_command("log dump");
   _admin_socket->unregister_command("log reopen");
